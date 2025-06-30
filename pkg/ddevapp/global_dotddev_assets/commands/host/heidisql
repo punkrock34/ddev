@@ -7,6 +7,22 @@
 ## OSTypes: windows,wsl2,linux
 ## HostBinaryExists: /mnt/c/Program Files/HeidiSQL/heidisql.exe,C:\Program Files\HeidiSQL\Heidisql.exe,/usr/bin/heidisql,/usr/local/bin/heidisql
 
+add_library_argument() {
+  local binary_path="$1"
+
+  case "$db_type" in
+  postgres)
+    postgres_lib=$(get_postgres_library "$binary_path") || return 1
+    arguments+=("--library=${postgres_lib}")
+    ;;
+  mariadb | mysql)
+    if [ -n "$db_library" ]; then
+      arguments+=("--library=${db_library}")
+    fi
+    ;;
+  esac
+}
+
 get_postgres_library() {
   local binary_path="$1"
 
@@ -25,36 +41,11 @@ get_postgres_library() {
   if [ -n "$native_libpq" ]; then
     echo "$native_libpq"
     return 0
-  else
-    echo "Error: Native PostgreSQL connection requires 'libpq5'." >&2
-    echo "Please install it (e.g., 'sudo apt install libpq5')." >&2
-    return 1
-  fi
-}
-
-get_mariadb_library() {
-  local binary_path="$1"
-
-  if [ -n "$db_library" ]; then
-    echo "$db_library"
-    return 0
   fi
 
-  if [[ "$binary_path" == *.exe ]]; then
-    echo "libmariadb.dll"
-    return 0
-  fi
-
-  local native_libmariadb
-  native_libmariadb=$(ldconfig -p | grep -o '/.*libmariadb\.so\.3' | head -n1)
-  if [ -n "$native_libmariadb" ]; then
-    echo "$native_libmariadb"
-    return 0
-  else
-    echo "Error: Native MariaDB connection requires 'libmariadb3'." >&2
-    echo "Please install it (e.g., 'sudo apt install libmariadb3')." >&2
-    return 1
-  fi
+  echo "Error: Native PostgreSQL connection requires 'libpq5'." >&2
+  echo "Please install it (e.g., 'sudo apt install libpq5')." >&2
+  return 1
 }
 
 if [ "${DDEV_PROJECT_STATUS}" != "running" ] && [ -z "$no_recursion" ]; then
@@ -94,15 +85,8 @@ arguments=(
 
 case $OSTYPE in
 "win"* | "msys"*)
-  case "$db_type" in
-  postgres)
-    arguments+=("--library=${db_library:-libpq-10.dll}")
-    ;;
-  mariadb | mysql)
-    arguments+=("--library=${db_library:-libmariadb.dll}")
-    ;;
-  esac
-  start "" "C:\Program Files\HeidiSQL\heidisql.exe" "${arguments[@]}" &
+  add_library_argument "heidisql.exe"
+  start "" "C:\Program Files\HeidiSQL\heidisql.exe" "${arguments[@]}"
   ;;
 
 "linux-gnu")
@@ -114,17 +98,7 @@ case $OSTYPE in
   for binary in "${BINARIES[@]}"; do
     if [ -x "$binary" ]; then
       launch_args=("${arguments[@]}")
-      case "$db_type" in
-      postgres)
-        postgres_lib=$(get_postgres_library "$binary") || continue
-        launch_args+=("--library=${postgres_lib}")
-        ;;
-      mariadb | mysql)
-        mariadb_lib=$(get_mariadb_library "$binary") || continue
-        launch_args+=("--library=${mariadb_lib}")
-        ;;
-      esac
-
+      add_library_argument "$binary" || continue
       "$binary" "${launch_args[@]}" &>/dev/null &
       disown
       exit 0
